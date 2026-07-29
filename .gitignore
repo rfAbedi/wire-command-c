@@ -1,0 +1,19 @@
+# Build output
+/build/
+/wirecommand
+/wirecommand-uds
+/wirecommand-tcp
+
+# Coverage and diagnostic output
+*.gcda
+*.gcno
+*.gcov
+*.info
+core
+core.*
+
+# Local task attachments and packaged output
+*.pdf
+*.zip
+*.mp4
+*.tar.gz
