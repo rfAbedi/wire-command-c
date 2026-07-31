@@ -3,6 +3,7 @@
 #include "wirecommand/buffer.h"
 #include "wirecommand/protocol.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
@@ -287,6 +288,40 @@ static int wc_make_pwd_request(struct wc_buffer *request)
     return 0;
 }
 
+/* Count a Linux process's open descriptors without changing that process. */
+static int wc_count_process_descriptors(pid_t process_id, size_t *count)
+{
+    char directory_path[64];
+    DIR *directory;
+    struct dirent *entry;
+
+    if (snprintf(directory_path, sizeof(directory_path), "/proc/%ld/fd",
+                 (long)process_id) < 0) {
+        return -1;
+    }
+    directory = opendir(directory_path);
+    if (directory == NULL) {
+        return -1;
+    }
+
+    *count = 0;
+    errno = 0;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") != 0 &&
+            strcmp(entry->d_name, "..") != 0) {
+            ++*count;
+        }
+    }
+    if (errno != 0) {
+        int saved_errno = errno;
+
+        (void)closedir(directory);
+        errno = saved_errno;
+        return -1;
+    }
+    return closedir(directory);
+}
+
 static int test_uds_fragmented_request_returns_response(
     const char *server_program)
 {
@@ -474,6 +509,54 @@ static int test_uds_disconnected_client_requests_are_discarded(
     return 0;
 }
 
+static int test_uds_repeated_connections_release_descriptors(
+    const char *server_program)
+{
+    struct wc_server_fixture fixture;
+    struct wc_buffer request;
+    struct wc_buffer response;
+    char working_directory[4096];
+    size_t descriptors_before;
+    size_t descriptors_after;
+    int index;
+
+    WC_INTEGRATION_ASSERT(getcwd(working_directory,
+                                 sizeof(working_directory)) != NULL);
+    WC_INTEGRATION_ASSERT(wc_start_server(&fixture, server_program, 6) == 0);
+    WC_INTEGRATION_ASSERT(wc_make_pwd_request(&request) == 0);
+    WC_INTEGRATION_ASSERT(wc_buffer_init(&response, UINT16_MAX + 2U) == 0);
+
+    WC_INTEGRATION_ASSERT(wc_write_all(fixture.client_fd, request.data,
+                                       request.length) == 0);
+    WC_INTEGRATION_ASSERT(wc_expect_response(
+                              fixture.client_fd, &response, working_directory,
+                              strlen(working_directory)) == 0);
+    WC_INTEGRATION_ASSERT(wc_count_process_descriptors(
+                              fixture.process_id, &descriptors_before) == 0);
+
+    for (index = 0; index < 50; ++index) {
+        int short_client = wc_connect_to_server(fixture.socket_path);
+
+        WC_INTEGRATION_ASSERT(short_client != -1);
+        WC_INTEGRATION_ASSERT(close(short_client) == 0);
+        wc_short_pause();
+    }
+
+    WC_INTEGRATION_ASSERT(wc_write_all(fixture.client_fd, request.data,
+                                       request.length) == 0);
+    WC_INTEGRATION_ASSERT(wc_expect_response(
+                              fixture.client_fd, &response, working_directory,
+                              strlen(working_directory)) == 0);
+    WC_INTEGRATION_ASSERT(wc_count_process_descriptors(
+                              fixture.process_id, &descriptors_after) == 0);
+    WC_INTEGRATION_ASSERT(descriptors_after == descriptors_before);
+
+    wc_buffer_destroy(&request);
+    wc_buffer_destroy(&response);
+    WC_INTEGRATION_ASSERT(wc_stop_server(&fixture) == 0);
+    return 0;
+}
+
 int main(int argument_count, char **arguments)
 {
     struct wc_integration_test {
@@ -491,6 +574,8 @@ int main(int argument_count, char **arguments)
          test_uds_invalid_request_disconnects_only_that_client},
         {"test_uds_disconnected_client_requests_are_discarded",
          test_uds_disconnected_client_requests_are_discarded},
+        {"test_uds_repeated_connections_release_descriptors",
+         test_uds_repeated_connections_release_descriptors},
     };
     size_t index;
     size_t failures = 0;
