@@ -4,9 +4,11 @@
 #include "wirecommand/protocol.h"
 #include "wirecommand/socket_utils.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -18,8 +20,9 @@ static void wc_client_print_usage(const char *program)
             "Usage:\n"
             "  %s [--socket PATH] PWD\n"
             "  %s [--socket PATH] LS DIRECTORY\n"
-            "  %s [--socket PATH] CAT /ABSOLUTE/FILE\n",
-            program, program, program);
+            "  %s [--socket PATH] CAT /ABSOLUTE/FILE\n"
+            "  %s --host IPv4 [--port 1-65535] PWD|LS|CAT [ARGUMENT]\n",
+            program, program, program, program);
 }
 
 static int wc_client_parse_command(const char *name,
@@ -38,7 +41,7 @@ static int wc_client_parse_command(const char *name,
     return 0;
 }
 
-static int wc_client_connect(const char *socket_path)
+static int wc_client_connect_uds(const char *socket_path)
 {
     struct sockaddr_un address = {0};
     int socket_fd;
@@ -56,6 +59,53 @@ static int wc_client_connect(const char *socket_path)
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, socket_path, strlen(socket_path) + 1);
 
+    if (connect(socket_fd, (struct sockaddr *)&address, sizeof(address)) ==
+        -1) {
+        int saved_errno = errno;
+
+        (void)close(socket_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    return socket_fd;
+}
+
+static int wc_client_parse_port(const char *text, uint16_t *port)
+{
+    char *end;
+    unsigned long value;
+
+    errno = 0;
+    value = strtoul(text, &end, 10);
+    if (errno != 0 || text[0] == '\0' || *end != '\0' || value == 0 ||
+        value > UINT16_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    *port = (uint16_t)value;
+    return 0;
+}
+
+static int wc_client_connect_tcp(const char *host, uint16_t port)
+{
+    struct sockaddr_in address = {0};
+    int socket_fd;
+    int address_result;
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address_result = inet_pton(AF_INET, host, &address.sin_addr);
+    if (address_result != 1) {
+        if (address_result == 0) {
+            errno = EINVAL;
+        }
+        return -1;
+    }
+
+    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd == -1) {
+        return -1;
+    }
     if (connect(socket_fd, (struct sockaddr *)&address, sizeof(address)) ==
         -1) {
         int saved_errno = errno;
@@ -124,23 +174,46 @@ static int wc_client_receive_response(int socket_fd)
 int main(int argument_count, char **arguments)
 {
     const char *socket_path = "/tmp/wirecommand.sock";
+    const char *tcp_host = "127.0.0.1";
+    uint16_t tcp_port = 9090;
     const char *command_name;
     const char *command_argument = NULL;
     enum wc_request_type request_type;
     struct wc_buffer request;
     size_t argument_length = 0;
     int argument_index = 1;
+    int socket_option_seen = 0;
+    int use_tcp = 0;
     int socket_fd;
     int result = 1;
 
-    if (argument_index < argument_count &&
-        strcmp(arguments[argument_index], "--socket") == 0) {
-        if (argument_index + 1 >= argument_count) {
-            wc_client_print_usage(arguments[0]);
-            return 2;
+    while (argument_index < argument_count) {
+        const char *option = arguments[argument_index];
+
+        if (strcmp(option, "--socket") == 0 &&
+            argument_index + 1 < argument_count && !use_tcp) {
+            socket_path = arguments[argument_index + 1];
+            socket_option_seen = 1;
+            argument_index += 2;
+        } else if (strcmp(option, "--host") == 0 &&
+                   argument_index + 1 < argument_count &&
+                   !socket_option_seen) {
+            tcp_host = arguments[argument_index + 1];
+            use_tcp = 1;
+            argument_index += 2;
+        } else if (strcmp(option, "--port") == 0 &&
+                   argument_index + 1 < argument_count &&
+                   !socket_option_seen) {
+            if (wc_client_parse_port(arguments[argument_index + 1],
+                                     &tcp_port) == -1) {
+                wc_client_print_usage(arguments[0]);
+                return 2;
+            }
+            use_tcp = 1;
+            argument_index += 2;
+        } else {
+            break;
         }
-        socket_path = arguments[argument_index + 1];
-        argument_index += 2;
     }
     if (argument_index >= argument_count) {
         wc_client_print_usage(arguments[0]);
@@ -182,7 +255,11 @@ int main(int argument_count, char **arguments)
         return 1;
     }
 
-    socket_fd = wc_client_connect(socket_path);
+    if (use_tcp) {
+        socket_fd = wc_client_connect_tcp(tcp_host, tcp_port);
+    } else {
+        socket_fd = wc_client_connect_uds(socket_path);
+    }
     if (socket_fd == -1) {
         perror("wirecommand: connect");
         wc_buffer_destroy(&request);
