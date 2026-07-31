@@ -3,7 +3,7 @@
 set -eu
 
 missing=0
-for tool in cc make; do
+for tool in cc make tar; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Missing required tool: %s\n' "$tool" >&2
         missing=1
@@ -11,7 +11,7 @@ for tool in cc make; do
 done
 
 if [ "$missing" -ne 0 ]; then
-    printf '%s\n' 'On Debian, install them with: sudo apt-get install build-essential' >&2
+    printf '%s\n' 'On Debian, install them with: sudo apt-get install build-essential tar' >&2
     exit 1
 fi
 

@@ -4,6 +4,8 @@ CLANG_FORMAT ?= clang-format
 CPPFLAGS := -Iinclude
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -O2
 BUILD_DIR := build
+PACKAGE_DIR := dist
+PACKAGE_NAME := wirecommand-1.0.0
 CORE_SOURCES := src/logging.c src/buffer.c src/protocol.c src/commands.c src/queue.c src/socket_utils.c
 CORE_OBJECTS := $(CORE_SOURCES:src/%.c=$(BUILD_DIR)/obj/%.o)
 UDS_SOURCES := src/server_uds.c src/main_uds.c
@@ -21,10 +23,11 @@ INTEGRATION_RUNNER := $(BUILD_DIR)/tests/integration_uds
 TCP_INTEGRATION_OBJECT := $(BUILD_DIR)/obj/tests/integration/test_tcp.o
 TCP_INTEGRATION_RUNNER := $(BUILD_DIR)/tests/integration_tcp
 DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UDS_OBJECTS:.o=.d) $(THREADED_UDS_OBJECTS:.o=.d) $(TCP_OBJECTS:.o=.d) $(CLIENT_OBJECT:.o=.d) $(UNIT_OBJECTS:.o=.d) $(INTEGRATION_OBJECT:.o=.d) $(TCP_INTEGRATION_OBJECT:.o=.d)
-FORMAT_FILES := $(wildcard include/wirecommand/*.h src/*.c tests/unit/*.c tests/unit/*.h)
+FORMAT_FILES := $(wildcard include/wirecommand/*.h src/*.c tests/unit/*.c tests/unit/*.h tests/integration/*.c)
 COVERAGE_SOURCES := $(CORE_SOURCES) $(UDS_SOURCES) $(THREADED_UDS_SOURCES) $(TCP_SOURCES) src/main_client.c
+PACKAGE_FILES := Makefile setup.sh README.md Jenkinsfile FEATURES.md include src tests wirecommand wirecommand-uds wirecommand-uds-threaded wirecommand-tcp
 
-.PHONY: all test integration-test check asan ubsan coverage clean ci-clean
+.PHONY: all test integration-test check debug asan ubsan coverage format clean package ci-clean
 
 all: wirecommand wirecommand-uds wirecommand-uds-threaded wirecommand-tcp
 
@@ -78,6 +81,10 @@ integration-test: wirecommand-uds wirecommand-uds-threaded wirecommand-tcp $(INT
 
 check: all test integration-test
 
+debug:
+	$(MAKE) clean
+	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g' all
+
 asan:
 	$(MAKE) clean
 	ASAN_OPTIONS=allocator_may_return_null=1:detect_leaks=1 $(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g -fsanitize=address -fno-omit-frame-pointer' check
@@ -91,10 +98,19 @@ coverage:
 	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g --coverage' check
 	gcov -o $(BUILD_DIR)/obj $(COVERAGE_SOURCES)
 
+format:
+	@command -v $(CLANG_FORMAT) >/dev/null 2>&1 || { printf '%s\n' 'clang-format is required for make format' >&2; exit 1; }
+	$(CLANG_FORMAT) -i $(FORMAT_FILES)
+
 clean:
-	rm -rf -- $(BUILD_DIR)
+	rm -rf -- build dist
 	rm -f -- *.gcov
 	rm -f -- wirecommand wirecommand-uds wirecommand-uds-threaded wirecommand-tcp
+
+package: all
+	mkdir -p -- $(PACKAGE_DIR)
+	rm -f -- $(PACKAGE_DIR)/$(PACKAGE_NAME).tar.gz
+	tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner --transform='s,^,$(PACKAGE_NAME)/,' -czf $(PACKAGE_DIR)/$(PACKAGE_NAME).tar.gz $(PACKAGE_FILES)
 
 ci-clean: clean
 	rm -f -- build.log unit-tests.log integration-tests.log asan.log ubsan.log
