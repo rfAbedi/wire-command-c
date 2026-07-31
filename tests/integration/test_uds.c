@@ -288,15 +288,16 @@ static int wc_make_pwd_request(struct wc_buffer *request)
     return 0;
 }
 
-/* Count a Linux process's open descriptors without changing that process. */
-static int wc_count_process_descriptors(pid_t process_id, size_t *count)
+/* Count entries in one Linux /proc directory for the server process. */
+static int wc_count_process_entries(pid_t process_id, const char *entry_name,
+                                    size_t *count)
 {
     char directory_path[64];
     DIR *directory;
     struct dirent *entry;
 
-    if (snprintf(directory_path, sizeof(directory_path), "/proc/%ld/fd",
-                 (long)process_id) < 0) {
+    if (snprintf(directory_path, sizeof(directory_path), "/proc/%ld/%s",
+                 (long)process_id, entry_name) < 0) {
         return -1;
     }
     directory = opendir(directory_path);
@@ -320,6 +321,11 @@ static int wc_count_process_descriptors(pid_t process_id, size_t *count)
         return -1;
     }
     return closedir(directory);
+}
+
+static int wc_count_process_descriptors(pid_t process_id, size_t *count)
+{
+    return wc_count_process_entries(process_id, "fd", count);
 }
 
 static int test_uds_fragmented_request_returns_response(
@@ -557,6 +563,39 @@ static int test_uds_repeated_connections_release_descriptors(
     return 0;
 }
 
+static int test_uds_threaded_creates_one_worker_per_client(
+    const char *server_program)
+{
+    struct wc_server_fixture fixture;
+    int extra_clients[3];
+    size_t thread_count = 0;
+    int attempt;
+    int index;
+
+    WC_INTEGRATION_ASSERT(wc_start_server(&fixture, server_program, 7) == 0);
+    for (index = 0; index < 3; ++index) {
+        extra_clients[index] = wc_connect_to_server(fixture.socket_path);
+        WC_INTEGRATION_ASSERT(extra_clients[index] != -1);
+    }
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        WC_INTEGRATION_ASSERT(wc_count_process_entries(
+                                  fixture.process_id, "task",
+                                  &thread_count) == 0);
+        if (thread_count >= 5) {
+            break;
+        }
+        wc_short_pause();
+    }
+    WC_INTEGRATION_ASSERT(thread_count >= 5);
+
+    for (index = 0; index < 3; ++index) {
+        WC_INTEGRATION_ASSERT(close(extra_clients[index]) == 0);
+    }
+    WC_INTEGRATION_ASSERT(wc_stop_server(&fixture) == 0);
+    return 0;
+}
+
 int main(int argument_count, char **arguments)
 {
     struct wc_integration_test {
@@ -576,13 +615,15 @@ int main(int argument_count, char **arguments)
          test_uds_disconnected_client_requests_are_discarded},
         {"test_uds_repeated_connections_release_descriptors",
          test_uds_repeated_connections_release_descriptors},
+        {"test_uds_threaded_creates_one_worker_per_client",
+         test_uds_threaded_creates_one_worker_per_client},
     };
     size_t index;
     size_t failures = 0;
     struct sigaction timeout_action = {0};
 
-    if (argument_count != 2) {
-        fprintf(stderr, "Usage: %s SERVER_PROGRAM\n", arguments[0]);
+    if (argument_count != 2 && argument_count != 3) {
+        fprintf(stderr, "Usage: %s SERVER_PROGRAM [threaded]\n", arguments[0]);
         return 2;
     }
 
@@ -590,7 +631,10 @@ int main(int argument_count, char **arguments)
     WC_INTEGRATION_ASSERT(sigemptyset(&timeout_action.sa_mask) == 0);
     WC_INTEGRATION_ASSERT(sigaction(SIGALRM, &timeout_action, NULL) == 0);
     alarm(30);
-    for (index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index) {
+    for (index = 0;
+         index < sizeof(tests) / sizeof(tests[0]) -
+                     (argument_count == 3 ? 0U : 1U);
+         ++index) {
         int result = tests[index].function(arguments[1]);
 
         wc_force_stop_active_server();
@@ -602,6 +646,7 @@ int main(int argument_count, char **arguments)
             ++failures;
         }
     }
-    printf("1..%zu\n", sizeof(tests) / sizeof(tests[0]));
+    printf("1..%zu\n", sizeof(tests) / sizeof(tests[0]) -
+                            (argument_count == 3 ? 0U : 1U));
     return failures == 0 ? 0 : 1;
 }
