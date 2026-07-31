@@ -1,7 +1,7 @@
 # WireCommand
 
-WireCommand is an interview-oriented C17/Linux client-server project. It will
-provide two servers on one evolving mainline:
+WireCommand is an interview-oriented C17/Linux client-server project. It
+provides these server versions on one evolving mainline:
 
 - `wirecommand-uds`: a single-threaded, `poll()`-based UNIX-domain server.
 - `wirecommand-uds-threaded`: a learning version with one worker per UDS
@@ -32,10 +32,10 @@ make coverage
 make clean
 ```
 
-`make` builds the client and both UDS server versions. The test targets run the
-unit suite, the real UDS suites, or both. Packaging is deferred until the final
-milestone. Sanitizer builds reuse this small Makefile with sanitizer compiler
-flags.
+`make` builds the client, both UDS versions, and the TCP server. The test
+targets run the unit suite and all real-server integration suites. Packaging is
+deferred until the final milestone. Sanitizer builds reuse this small Makefile
+with sanitizer compiler flags.
 
 ## Continuous integration
 
@@ -89,6 +89,8 @@ newline, which keeps `CAT` safe for binary files. For easier terminal viewing:
 ./wirecommand --socket /tmp/wirecommand-demo.sock PWD; echo
 ```
 
+The same client can connect to the TCP server with `--host` and `--port`.
+
 ## Thread-per-client UDS server
 
 The original poll server remains available unchanged. Start the threaded
@@ -113,6 +115,35 @@ joined during shutdown.
 One mutex protects only worker lifecycle fields. It is never held during
 socket I/O, command execution, or logging. Logging remains mutex-free as
 requested; timestamp conversion uses thread-safe `localtime_r()`.
+
+## Thread-per-client TCP server
+
+The TCP version binds to loopback port 9090 by default. The bind address must
+currently be a numeric IPv4 address:
+
+```sh
+./wirecommand-tcp
+./wirecommand-tcp --bind 0.0.0.0 --port 8080 --log-level debug
+```
+
+Manual client examples:
+
+```sh
+./wirecommand --host 127.0.0.1 --port 9090 PWD; echo
+./wirecommand --host 127.0.0.1 --port 9090 LS /tmp
+./wirecommand --host 127.0.0.1 --port 9090 CAT /etc/hostname
+```
+
+The main TCP thread owns the listening descriptor and the worker table. Each
+accepted client transfers to one worker, which owns the descriptor and its two
+bounded buffers until it exits. Requests remain ordered within one connection,
+while separate workers execute different clients concurrently.
+
+Completed workers are joined before their slots are reused. On `SIGINT` or
+`SIGTERM`, only the main thread handles the signal. It publishes shutdown under
+the lifecycle mutex, closes the listener, and joins every worker. Workers poll
+with a short timeout so they can observe shutdown without another thread
+closing their client descriptor.
 
 The main function installs `SIGINT` and `SIGTERM` handlers, then calls the
 server loop. The loop accepts nonblocking clients, uses `poll()` for readiness,
@@ -150,10 +181,9 @@ Logs are diagnostic output written only to standard error:
 ```
 
 The available levels are `ERROR`, `WARN`, `INFO`, `DEBUG`, and `TRACE`, and
-the default is `INFO`. The server accepts `--log-level`. Logging is best-effort
-and preserves `errno`. It is intentionally lock-free while the UDS server is
-single-threaded; the TCP milestone will add only the synchronization needed by
-worker threads.
+the default is `INFO`. Each server accepts `--log-level`. Logging is best-effort
+and preserves `errno`. It has no application-level mutex as requested. Each
+record uses one `fprintf()` call, and timestamp conversion uses `localtime_r()`.
 
 ## Architecture
 
