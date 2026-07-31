@@ -14,7 +14,11 @@ enum wc_log_level {
 /* Return the stable uppercase name for level, or "UNKNOWN". */
 const char *wc_log_level_name(enum wc_log_level level);
 
-/* Set or retrieve the process-wide minimum level. The default is INFO. */
+/*
+ * Set or retrieve the process-wide minimum level. The default is INFO.
+ * Set the level before starting worker threads; concurrent changes are not
+ * supported by the intentionally lock-free logger.
+ */
 void wc_log_set_level(enum wc_log_level level);
 enum wc_log_level wc_log_get_level(void);
 

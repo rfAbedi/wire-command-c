@@ -23,6 +23,7 @@ struct wc_request_queue {
     size_t length;
 };
 
+/* Initialize a caller-owned queue. Clear it before its lifetime ends. */
 int wc_request_queue_init(struct wc_request_queue *queue);
 
 /* Copy one parsed request and append it at the tail. */
@@ -43,6 +44,7 @@ wc_request_queue_peek(const struct wc_request_queue *queue);
 size_t wc_request_queue_discard_client(struct wc_request_queue *queue,
                                        int client_fd);
 
+/* Free every owned request. The queue object itself remains caller-owned. */
 void wc_request_queue_clear(struct wc_request_queue *queue);
 void wc_queued_request_destroy(struct wc_queued_request *request);
 
