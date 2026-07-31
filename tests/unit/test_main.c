@@ -61,12 +61,14 @@ int test_commands_cat_relative_path_is_rejected(void);
 int test_commands_cat_path_with_quote_is_shell_safe(void);
 int test_queue_initial_state_is_empty(void);
 int test_queue_empty_dequeue_returns_error(void);
+int test_queue_peek_borrows_first_request(void);
 int test_queue_requests_are_dequeued_in_fifo_order(void);
 int test_queue_argument_is_copied(void);
 int test_queue_disconnected_client_requests_are_discarded(void);
 int test_queue_remains_usable_after_client_discard(void);
 int test_queue_clear_removes_every_request(void);
 int test_queue_allocation_failure_leaves_queue_empty(void);
+int test_socket_utils_write_all_sends_every_byte(void);
 
 int main(void)
 {
@@ -187,6 +189,8 @@ int main(void)
          test_queue_initial_state_is_empty},
         {"test_queue_empty_dequeue_returns_error",
          test_queue_empty_dequeue_returns_error},
+        {"test_queue_peek_borrows_first_request",
+         test_queue_peek_borrows_first_request},
         {"test_queue_requests_are_dequeued_in_fifo_order",
          test_queue_requests_are_dequeued_in_fifo_order},
         {"test_queue_argument_is_copied",
@@ -199,6 +203,8 @@ int main(void)
          test_queue_clear_removes_every_request},
         {"test_queue_allocation_failure_leaves_queue_empty",
          test_queue_allocation_failure_leaves_queue_empty},
+        {"test_socket_utils_write_all_sends_every_byte",
+         test_socket_utils_write_all_sends_every_byte},
     };
     size_t index;
     size_t failures = 0;
