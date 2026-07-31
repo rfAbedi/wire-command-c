@@ -9,9 +9,10 @@ provides these server versions on one evolving mainline:
 - `wirecommand-tcp`: a TCP server with one worker thread per client.
 
 The transports share bounded buffering, binary protocol, command, logging,
-and socket utility modules. The code favors direct, small POSIX
-implementations that can be understood and explained within the three-day
-project schedule.
+and socket utility modules. The code favors direct, small C/POSIX control
+flow that can be understood and explained within the three-day project
+schedule. The command handlers remain the accepted shell-backed exception,
+documented under Limitations.
 
 ## Requirements
 
@@ -26,16 +27,21 @@ make
 make test
 make integration-test
 make check
+make debug
 make asan
 make ubsan
 make coverage
+make format
+make package
 make clean
 ```
 
 `make` builds the client, both UDS versions, and the TCP server. The test
-targets run the unit suite and all real-server integration suites. Packaging is
-deferred until the final milestone. Sanitizer builds reuse this small Makefile
-with sanitizer compiler flags.
+targets run the unit suite and all real-server integration suites. `debug`
+rebuilds without optimization and with debug symbols. `format` requires the
+optional `clang-format` tool. `package` creates
+`dist/wirecommand-1.0.0.tar.gz` containing source, tests, documentation, and
+the four built binaries.
 
 ## Continuous integration
 
@@ -57,6 +63,19 @@ Start the server with its default socket, or choose a socket and log level:
 ./wirecommand-uds
 ./wirecommand-uds --socket /tmp/example.sock --log-level debug
 ```
+
+The main function installs `SIGINT` and `SIGTERM` handlers, then calls the
+server loop. The loop accepts nonblocking clients, uses `poll()` for read and
+write readiness, parses complete requests into the FIFO queue, and dispatches
+them in order. Each client owns one bounded input buffer and one bounded output
+buffer. The shared request queue is also bounded at 256 entries; a client that
+exceeds that resource limit is disconnected instead of allowing unbounded
+allocation.
+
+Malformed input closes only that client. Disconnect cleanup removes that
+client's queued requests before closing its descriptor. Shutdown closes every
+client and the listener and unlinks the socket path. The signal handler itself
+only sets a `sig_atomic_t` flag; cleanup stays in normal program flow.
 
 ## Manual client
 
@@ -145,33 +164,6 @@ the lifecycle mutex, closes the listener, and joins every worker. Workers poll
 with a short timeout so they can observe shutdown without another thread
 closing their client descriptor.
 
-The main function installs `SIGINT` and `SIGTERM` handlers, then calls the
-server loop. The loop accepts nonblocking clients, uses `poll()` for readiness,
-parses complete requests into the FIFO queue, and dispatches them in order.
-Each client owns one bounded input buffer and one bounded output buffer.
-The shared request queue is also bounded at 256 entries; a client that exceeds
-that resource limit is disconnected instead of allowing unbounded allocation.
-
-Malformed input closes only that client. Disconnect cleanup removes that
-client's queued requests before closing its descriptor. Shutdown closes every
-client and the listener and unlinks the socket path. The signal handler itself
-only sets a `sig_atomic_t` flag; cleanup stays in normal program flow.
-
-### Ownership summary
-
-| Resource | Owner | Released by |
-| --- | --- | --- |
-| Listening descriptor | UDS server loop | Server shutdown cleanup |
-| Client descriptor | One client-table entry | `wc_uds_remove_client()` |
-| Client input/output buffers | Same client-table entry | `wc_uds_remove_client()` |
-| Parsed request view | Client input buffer | Invalid after input consumption |
-| Queued request and argument copy | Request queue, then dispatcher | `wc_queued_request_destroy()` |
-| Command result data | Server dispatcher | `wc_command_result_destroy()` |
-
-Repeated-connect integration coverage compares `/proc/<server-pid>/fd` before
-and after 50 short connections. This checks that client descriptors are not
-leaked while the server remains running.
-
 ## Logging
 
 Logs are diagnostic output written only to standard error:
@@ -189,11 +181,63 @@ record uses one `fprintf()` call, and timestamp conversion uses `localtime_r()`.
 
 Public interfaces live under `include/wirecommand/` and use the `wc_` prefix.
 Core implementations live in `src/`; unit and integration tests are separate.
-The protocol layer will have no filesystem or socket access, the command layer
-will have no wire or socket access, and server orchestration will connect those
-layers. The final project uses C17 and POSIX socket facilities. The UDS release
-keeps the deliberately simple shell-backed command module described below.
-This is an accepted deviation from the original direct-filesystem-API plan.
+The protocol layer has no filesystem or socket access, the command layer has no
+wire or socket access, and server orchestration connects those layers.
+
+```text
+wirecommand client
+        |
+        | binary request/response
+        v
+UDS poll server / threaded UDS / threaded TCP
+        |
+        +--> protocol parser and encoder
+        +--> bounded input and output buffers
+        +--> LS, PWD, and CAT command results
+        +--> diagnostic logging to stderr
+```
+
+The single-threaded UDS server owns a client table and one typed FIFO request
+queue. The threaded servers instead give each client an independent sequential
+session; their main threads only accept connections and track worker lifetime.
+All variants share the protocol, buffer, command, logging, and socket modules.
+
+### Ownership and lifetime
+
+| Resource | Owner | Lifetime ends when |
+| --- | --- | --- |
+| Listener descriptor | Server main loop | Server shutdown |
+| Poll-UDS client descriptor and buffers | Client-table entry | Client removal |
+| Threaded client descriptor and buffers | One worker | Worker exit |
+| Worker thread handle | Server worker table | Main thread joins it |
+| Parsed protocol view | Input buffer | Buffer is consumed, grown, or destroyed |
+| Queued UDS request copy | Queue, then dispatcher | Request is destroyed |
+| Command result allocation | Server dispatcher | Result is destroyed |
+| Encoded client request | `wirecommand` client | Client cleanup |
+
+Descriptors transfer to a threaded worker only after `pthread_create()`
+succeeds. A creation failure leaves ownership with the accept loop, which
+closes the descriptor. No application mutex is held during command, socket, or
+logging operations.
+
+### Shutdown flow
+
+Signal handlers only assign a `volatile sig_atomic_t` flag. Thread creation
+blocks stop signals while the worker inherits its mask, so only the main thread
+handles `SIGINT` and `SIGTERM`. Back in normal control flow, the main thread
+stops accepting, publishes synchronized worker shutdown, closes the listener,
+joins every worker, and removes the UDS path where applicable.
+
+### How I/O multiplexing works
+
+`poll()` receives an array of descriptors plus the events wanted for each one.
+The kernel sleeps until at least one descriptor is ready, a signal interrupts
+the call, or the timeout expires. Returned `revents` bits identify which
+listener can accept, which client can be read, and which client can continue a
+partial write. Readiness does not guarantee a complete protocol message, so
+each client keeps its own input and output buffers between calls. Nonblocking
+descriptors ensure one unexpectedly short operation cannot stall the entire
+single-threaded UDS server.
 
 Code is kept beginner-readable: functions are short, names describe their
 purpose, and internal helpers are `static`. New abstractions are added only
@@ -284,13 +328,41 @@ Each request records its client descriptor. When a client disconnects,
 that descriptor. The queue itself performs no socket operations and emits no
 logs; those actions belong to server orchestration.
 
+The queue is intentionally typed because this project stores only protocol
+requests. A reusable C queue could instead store `void *` values and accept a
+destructor callback, or copy fixed-size elements using an element-size field.
+That flexibility also makes ownership and type errors easier, so a typed queue
+is the simpler and safer choice here. For an interview, explain the generic
+design as an alternative rather than adding unused abstraction to this code.
+
+## Final limitations and accepted decisions
+
+- Commands remain shell-backed with careful single-argument quoting, as
+  explicitly accepted during implementation.
+- TCP accepts numeric IPv4 addresses rather than hostnames or IPv6.
+- The protocol has no status field; textual command errors are ordinary
+  response data.
+- Poll and threaded servers use fixed, reviewable limits instead of unbounded
+  client or request allocation.
+- Logging has no application-level mutex by request; each record is emitted by
+  one standard-I/O call.
+
+## Interview walkthrough
+
+A short code walkthrough can follow this order:
+
+1. Show the protocol structures and incremental parser.
+2. Show per-client buffers and the poll-UDS descriptor table.
+3. Explain enqueue ownership and FIFO dispatch.
+4. Compare the UDS loop with TCP accept plus one worker per client.
+5. Trace signal handling, worker joins, descriptor closure, and cleanup.
+6. Explain the generic-queue alternative described above.
+7. Finish with the real-server, concurrency, sanitizer, and resource tests.
+
 ## Release plan
 
 - `v0.1.0-uds`: verified poll-based UNIX-domain server.
-- `v0.2.0-ci`: Jenkins CI, added immediately after the UDS release.
+- `v0.2.0-uds-threaded`: Jenkins CI and the threaded UDS learning version.
 - `v1.0.0`: verified threaded TCP server and final delivery.
 
 Commits and annotated tags are created only after explicit approval.
-
-The UDS transport is implemented and hardened. With the shell-command
-deviation accepted, it is ready to be proposed as `v0.1.0-uds`.
