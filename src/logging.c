@@ -46,19 +46,18 @@ enum wc_log_level wc_log_get_level(void)
 static int wc_log_timestamp(char *destination, size_t size)
 {
     time_t now = time(NULL);
-    struct tm *local_time;
+    struct tm local_time;
 
     if (now == (time_t)-1) {
         return -1;
     }
 
-    local_time = localtime(&now);
-    if (local_time == NULL) {
+    if (localtime_r(&now, &local_time) == NULL) {
         return -1;
     }
 
     if (strftime(destination, size, "%Y-%m-%d %H:%M:%S",
-                 local_time) == 0) {
+                 &local_time) == 0) {
         return -1;
     }
 
