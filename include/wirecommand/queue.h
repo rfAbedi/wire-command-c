@@ -35,6 +35,10 @@ int wc_request_queue_enqueue(struct wc_request_queue *queue, int client_fd,
 int wc_request_queue_dequeue(struct wc_request_queue *queue,
                              struct wc_queued_request **request);
 
+/* Borrow the head request without removing it. Returns NULL when empty. */
+const struct wc_queued_request *
+wc_request_queue_peek(const struct wc_request_queue *queue);
+
 /* Remove and destroy all requests belonging to client_fd. */
 size_t wc_request_queue_discard_client(struct wc_request_queue *queue,
                                        int client_fd);

@@ -33,6 +33,30 @@ int test_queue_empty_dequeue_returns_error(void)
     return 0;
 }
 
+int test_queue_peek_borrows_first_request(void)
+{
+    struct wc_request_queue queue;
+    const struct wc_queued_request *peeked;
+    struct wc_queued_request *dequeued;
+
+    WC_TEST_ASSERT(wc_request_queue_init(&queue) == 0);
+    WC_TEST_ASSERT(wc_request_queue_peek(&queue) == NULL);
+    WC_TEST_ASSERT(wc_request_queue_enqueue(
+                       &queue, 4, WC_REQUEST_LS,
+                       (const unsigned char *)"/x", 2) == 0);
+
+    peeked = wc_request_queue_peek(&queue);
+
+    WC_TEST_ASSERT(peeked != NULL);
+    WC_TEST_ASSERT(peeked->client_fd == 4);
+    WC_TEST_ASSERT(queue.length == 1);
+    WC_TEST_ASSERT(wc_request_queue_dequeue(&queue, &dequeued) == 0);
+    WC_TEST_ASSERT(dequeued == peeked);
+
+    wc_queued_request_destroy(dequeued);
+    return 0;
+}
+
 int test_queue_requests_are_dequeued_in_fifo_order(void)
 {
     struct wc_request_queue queue;

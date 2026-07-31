@@ -91,6 +91,15 @@ int wc_request_queue_dequeue(struct wc_request_queue *queue,
     return 0;
 }
 
+const struct wc_queued_request *
+wc_request_queue_peek(const struct wc_request_queue *queue)
+{
+    if (queue == NULL) {
+        return NULL;
+    }
+    return queue->head;
+}
+
 size_t wc_request_queue_discard_client(struct wc_request_queue *queue,
                                        int client_fd)
 {
