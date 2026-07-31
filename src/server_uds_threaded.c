@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -410,10 +411,14 @@ static int wc_threaded_uds_start_worker(
     struct wc_threaded_uds_server *server, int client_fd)
 {
     size_t index;
-    int create_result;
 
     for (index = 0; index < WC_THREADED_UDS_MAX_CLIENTS; ++index) {
         struct wc_threaded_uds_worker *worker = &server->workers[index];
+        int create_result;
+        int mask_result;
+        int restore_result;
+        sigset_t stop_signals;
+        sigset_t previous_signals;
 
         if (worker->in_use) {
             continue;
@@ -421,14 +426,35 @@ static int wc_threaded_uds_start_worker(
         worker->client_fd = client_fd;
         worker->finished = 0;
         worker->in_use = 1;
+
+        if (sigemptyset(&stop_signals) == -1 ||
+            sigaddset(&stop_signals, SIGINT) == -1 ||
+            sigaddset(&stop_signals, SIGTERM) == -1) {
+            worker->client_fd = -1;
+            worker->in_use = 0;
+            return -1;
+        }
+        mask_result = pthread_sigmask(SIG_BLOCK, &stop_signals,
+                                      &previous_signals);
+        if (mask_result != 0) {
+            worker->client_fd = -1;
+            worker->in_use = 0;
+            errno = mask_result;
+            return -1;
+        }
         create_result =
             pthread_create(&worker->thread, NULL,
                            wc_threaded_uds_worker_main, worker);
+        restore_result = pthread_sigmask(SIG_SETMASK, &previous_signals, NULL);
         if (create_result != 0) {
             worker->client_fd = -1;
             worker->in_use = 0;
             errno = create_result;
             return -1;
+        }
+        if (restore_result != 0) {
+            wc_log(WC_LOG_ERROR, "server", "signal_mask_restore_failed",
+                   "transport=uds-threaded error=%d", restore_result);
         }
         return 0;
     }
