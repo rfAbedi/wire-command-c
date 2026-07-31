@@ -67,7 +67,7 @@ pipeline {
                 timeout(time: 2, unit: 'MINUTES')
             }
             steps {
-                archiveArtifacts artifacts: 'wirecommand,wirecommand-uds,wirecommand-uds-threaded,*.log',
+                archiveArtifacts artifacts: 'wirecommand,wirecommand-uds,wirecommand-uds-threaded,wirecommand-tcp,*.log',
                                  fingerprint: true
             }
         }
