@@ -17,7 +17,7 @@ INTEGRATION_RUNNER := $(BUILD_DIR)/tests/integration_uds
 DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UDS_OBJECTS:.o=.d) $(CLIENT_OBJECT:.o=.d) $(UNIT_OBJECTS:.o=.d) $(INTEGRATION_OBJECT:.o=.d)
 FORMAT_FILES := $(wildcard include/wirecommand/*.h src/*.c tests/unit/*.c tests/unit/*.h)
 
-.PHONY: all test integration-test check coverage clean
+.PHONY: all test integration-test check asan ubsan coverage clean ci-clean
 
 all: wirecommand wirecommand-uds
 
@@ -55,6 +55,14 @@ integration-test: wirecommand-uds $(INTEGRATION_RUNNER)
 
 check: all test integration-test
 
+asan:
+	$(MAKE) clean
+	ASAN_OPTIONS=allocator_may_return_null=1:detect_leaks=1 $(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g -fsanitize=address -fno-omit-frame-pointer' check
+
+ubsan:
+	$(MAKE) clean
+	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g -fsanitize=undefined -fno-omit-frame-pointer' check
+
 coverage:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g --coverage' test
@@ -64,5 +72,8 @@ clean:
 	rm -rf -- $(BUILD_DIR)
 	rm -f -- *.gcov
 	rm -f -- wirecommand wirecommand-uds
+
+ci-clean: clean
+	rm -f -- build.log unit-tests.log integration-tests.log asan.log ubsan.log
 
 -include $(DEPENDENCIES)

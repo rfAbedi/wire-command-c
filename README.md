@@ -24,6 +24,8 @@ make
 make test
 make integration-test
 make check
+make asan
+make ubsan
 make coverage
 make clean
 ```
@@ -32,6 +34,18 @@ make clean
 targets run the unit suite, the real UDS server suite, or both. Packaging is
 deferred until the final milestone. Sanitizer builds reuse this small Makefile
 with sanitizer compiler flags.
+
+## Continuous integration
+
+The `Jenkinsfile` defines CI only; there is no deployment destination. Jenkins
+checks out the repository and calls the same Makefile targets used locally for
+the normal build, unit tests, integration tests, AddressSanitizer, and
+UndefinedBehaviorSanitizer. Each stage has a timeout, failures stop the
+pipeline, and build/test logs plus both binaries are archived.
+
+The pipeline always calls `make ci-clean` after archiving available logs. This
+keeps Jenkins-specific cleanup in the Makefile without adding compiler commands
+to the pipeline.
 
 ## UDS server
 

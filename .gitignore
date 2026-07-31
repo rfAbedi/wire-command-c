@@ -11,6 +11,7 @@
 *.info
 core
 core.*
+/*.log
 
 # Local task attachments and packaged output
 *.pdf
