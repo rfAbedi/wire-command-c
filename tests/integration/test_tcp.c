@@ -532,6 +532,79 @@ static int test_tcp_command_line_client_receives_response(
     return 0;
 }
 
+static int test_tcp_half_closed_client_receives_response(
+    const char *server_program)
+{
+    struct wc_tcp_fixture fixture;
+    struct wc_buffer request;
+    struct wc_buffer input;
+    struct wc_response response;
+
+    WC_TCP_ASSERT(wc_tcp_start_server(&fixture, server_program) == 0);
+    WC_TCP_ASSERT(wc_tcp_make_pwd_request(&request) == 0);
+    WC_TCP_ASSERT(wc_buffer_init(&input, UINT16_MAX + 2) == 0);
+    WC_TCP_ASSERT(wc_socket_write_all(fixture.client_fd, request.data,
+                                      request.length) == 0);
+    WC_TCP_ASSERT(shutdown(fixture.client_fd, SHUT_WR) == 0);
+    WC_TCP_ASSERT(wc_tcp_receive_response(fixture.client_fd, &input,
+                                          &response) == 0);
+    WC_TCP_ASSERT(wc_tcp_response_is_pwd(&response));
+
+    wc_buffer_destroy(&input);
+    wc_buffer_destroy(&request);
+    WC_TCP_ASSERT(wc_tcp_stop_server(&fixture) == 0);
+    return 0;
+}
+
+static int test_tcp_many_clients_receive_every_response(
+    const char *server_program)
+{
+    enum { CLIENT_COUNT = 8, REQUEST_COUNT = 20 };
+    struct wc_tcp_fixture fixture;
+    struct wc_buffer requests;
+    struct wc_buffer inputs[CLIENT_COUNT];
+    int clients[CLIENT_COUNT];
+    int client_index;
+    int request_index;
+
+    WC_TCP_ASSERT(wc_tcp_start_server(&fixture, server_program) == 0);
+    WC_TCP_ASSERT(wc_buffer_init(&requests, UINT16_MAX) == 0);
+    for (request_index = 0; request_index < REQUEST_COUNT; ++request_index) {
+        WC_TCP_ASSERT(wc_protocol_encode_request(
+                          &requests, WC_REQUEST_PWD, NULL, 0) == 0);
+    }
+
+    for (client_index = 0; client_index < CLIENT_COUNT; ++client_index) {
+        clients[client_index] = wc_tcp_connect(fixture.port);
+        WC_TCP_ASSERT(clients[client_index] != -1);
+        WC_TCP_ASSERT(wc_buffer_init(&inputs[client_index], UINT16_MAX + 2) ==
+                      0);
+        WC_TCP_ASSERT(wc_socket_write_all(clients[client_index], requests.data,
+                                          requests.length) == 0);
+    }
+
+    for (client_index = 0; client_index < CLIENT_COUNT; ++client_index) {
+        for (request_index = 0; request_index < REQUEST_COUNT;
+             ++request_index) {
+            struct wc_response response;
+
+            WC_TCP_ASSERT(wc_tcp_receive_response(
+                              clients[client_index], &inputs[client_index],
+                              &response) == 0);
+            WC_TCP_ASSERT(wc_tcp_response_is_pwd(&response));
+            WC_TCP_ASSERT(wc_buffer_consume(
+                              &inputs[client_index],
+                              response.message_length) == 0);
+        }
+        WC_TCP_ASSERT(close(clients[client_index]) == 0);
+        wc_buffer_destroy(&inputs[client_index]);
+    }
+
+    wc_buffer_destroy(&requests);
+    WC_TCP_ASSERT(wc_tcp_stop_server(&fixture) == 0);
+    return 0;
+}
+
 static int test_tcp_repeated_connections_release_resources(
     const char *server_program)
 {
@@ -603,6 +676,10 @@ int main(int argument_count, char **arguments)
          test_tcp_shutdown_stops_active_workers},
         {"test_tcp_command_line_client_receives_response",
          test_tcp_command_line_client_receives_response},
+        {"test_tcp_half_closed_client_receives_response",
+         test_tcp_half_closed_client_receives_response},
+        {"test_tcp_many_clients_receive_every_response",
+         test_tcp_many_clients_receive_every_response},
         {"test_tcp_repeated_connections_release_resources",
          test_tcp_repeated_connections_release_resources},
     };
