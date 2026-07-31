@@ -45,6 +45,20 @@ int test_protocol_zero_length_response_is_complete(void);
 int test_protocol_complete_response_returns_data_view(void);
 int test_protocol_two_responses_parse_in_order(void);
 int test_protocol_complete_response_before_partial_response_parses(void);
+int test_commands_ls_lists_directory_entries(void);
+int test_commands_ls_empty_directory_returns_empty_result(void);
+int test_commands_ls_missing_directory_returns_error(void);
+int test_commands_pwd_returns_current_directory(void);
+int test_commands_pwd_beyond_limit_returns_error(void);
+int test_commands_cat_returns_binary_file_contents(void);
+int test_commands_cat_empty_file_returns_empty_result(void);
+int test_commands_cat_missing_file_returns_error(void);
+int test_commands_cat_directory_returns_type_error(void);
+int test_commands_cat_oversized_file_returns_error(void);
+int test_commands_cat_unreadable_file_returns_permission_error(void);
+int test_commands_path_with_embedded_null_is_rejected(void);
+int test_commands_cat_relative_path_is_rejected(void);
+int test_commands_cat_path_with_quote_is_shell_safe(void);
 
 int main(void)
 {
@@ -133,6 +147,34 @@ int main(void)
          test_protocol_two_responses_parse_in_order},
         {"test_protocol_complete_response_before_partial_response_parses",
          test_protocol_complete_response_before_partial_response_parses},
+        {"test_commands_ls_lists_directory_entries",
+         test_commands_ls_lists_directory_entries},
+        {"test_commands_ls_empty_directory_returns_empty_result",
+         test_commands_ls_empty_directory_returns_empty_result},
+        {"test_commands_ls_missing_directory_returns_error",
+         test_commands_ls_missing_directory_returns_error},
+        {"test_commands_pwd_returns_current_directory",
+         test_commands_pwd_returns_current_directory},
+        {"test_commands_pwd_beyond_limit_returns_error",
+         test_commands_pwd_beyond_limit_returns_error},
+        {"test_commands_cat_returns_binary_file_contents",
+         test_commands_cat_returns_binary_file_contents},
+        {"test_commands_cat_empty_file_returns_empty_result",
+         test_commands_cat_empty_file_returns_empty_result},
+        {"test_commands_cat_missing_file_returns_error",
+         test_commands_cat_missing_file_returns_error},
+        {"test_commands_cat_directory_returns_type_error",
+         test_commands_cat_directory_returns_type_error},
+        {"test_commands_cat_oversized_file_returns_error",
+         test_commands_cat_oversized_file_returns_error},
+        {"test_commands_cat_unreadable_file_returns_permission_error",
+         test_commands_cat_unreadable_file_returns_permission_error},
+        {"test_commands_path_with_embedded_null_is_rejected",
+         test_commands_path_with_embedded_null_is_rejected},
+        {"test_commands_cat_relative_path_is_rejected",
+         test_commands_cat_relative_path_is_rejected},
+        {"test_commands_cat_path_with_quote_is_shell_safe",
+         test_commands_cat_path_with_quote_is_shell_safe},
     };
     size_t index;
     size_t failures = 0;

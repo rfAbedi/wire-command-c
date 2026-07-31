@@ -4,9 +4,9 @@ CLANG_FORMAT ?= clang-format
 CPPFLAGS := -Iinclude
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -O2
 BUILD_DIR := build
-CORE_SOURCES := src/logging.c src/buffer.c src/protocol.c
+CORE_SOURCES := src/logging.c src/buffer.c src/protocol.c src/commands.c
 CORE_OBJECTS := $(CORE_SOURCES:src/%.c=$(BUILD_DIR)/obj/%.o)
-UNIT_SOURCES := tests/unit/test_main.c tests/unit/test_logging.c tests/unit/test_buffer.c tests/unit/test_protocol.c
+UNIT_SOURCES := tests/unit/test_main.c tests/unit/test_logging.c tests/unit/test_buffer.c tests/unit/test_protocol.c tests/unit/test_commands.c
 UNIT_OBJECTS := $(UNIT_SOURCES:tests/unit/%.c=$(BUILD_DIR)/obj/tests/%.o)
 UNIT_RUNNER := $(BUILD_DIR)/tests/unit_tests
 DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UNIT_OBJECTS:.o=.d)
@@ -34,7 +34,7 @@ test: $(UNIT_RUNNER)
 coverage:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g --coverage' test
-	gcov -o $(BUILD_DIR)/obj src/logging.c src/buffer.c src/protocol.c
+	gcov -o $(BUILD_DIR)/obj src/logging.c src/buffer.c src/protocol.c src/commands.c
 
 clean:
 	rm -rf -- $(BUILD_DIR)
