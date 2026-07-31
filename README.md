@@ -4,6 +4,8 @@ WireCommand is an interview-oriented C17/Linux client-server project. It will
 provide two servers on one evolving mainline:
 
 - `wirecommand-uds`: a single-threaded, `poll()`-based UNIX-domain server.
+- `wirecommand-uds-threaded`: a learning version with one worker per UDS
+  client.
 - `wirecommand-tcp`: a TCP server with one worker thread per client.
 
 The transports share bounded buffering, binary protocol, command, logging,
@@ -30,10 +32,10 @@ make coverage
 make clean
 ```
 
-`make` builds the `wirecommand` client and `wirecommand-uds` server. The test
-targets run the unit suite, the real UDS server suite, or both. Packaging is
-deferred until the final milestone. Sanitizer builds reuse this small Makefile
-with sanitizer compiler flags.
+`make` builds the client and both UDS server versions. The test targets run the
+unit suite, the real UDS suites, or both. Packaging is deferred until the final
+milestone. Sanitizer builds reuse this small Makefile with sanitizer compiler
+flags.
 
 ## Continuous integration
 
@@ -41,7 +43,7 @@ The `Jenkinsfile` defines CI only; there is no deployment destination. Jenkins
 checks out the repository and calls the same Makefile targets used locally for
 the normal build, unit tests, integration tests, AddressSanitizer, and
 UndefinedBehaviorSanitizer. Each stage has a timeout, failures stop the
-pipeline, and build/test logs plus both binaries are archived.
+pipeline, and build/test logs plus the client and server binaries are archived.
 
 The pipeline always calls `make ci-clean` after archiving available logs. This
 keeps Jenkins-specific cleanup in the Makefile without adding compiler commands
@@ -86,6 +88,31 @@ newline, which keeps `CAT` safe for binary files. For easier terminal viewing:
 ```sh
 ./wirecommand --socket /tmp/wirecommand-demo.sock PWD; echo
 ```
+
+## Thread-per-client UDS server
+
+The original poll server remains available unchanged. Start the threaded
+learning version with:
+
+```sh
+./wirecommand-uds-threaded
+./wirecommand-uds-threaded --socket /tmp/threaded.sock --log-level debug
+```
+
+The main thread accepts connections and starts one worker for each client. A
+worker owns that client descriptor and its input/output buffers until it exits.
+Requests from one client remain sequential, while different clients can run
+commands concurrently.
+
+Workers use `poll()` with a short timeout on their own descriptor. This lets
+them notice the synchronized shutdown state without another thread closing
+their socket. Only the main thread reads the signal flag. Completed workers are
+joined before their fixed table slots are reused, and all remaining workers are
+joined during shutdown.
+
+One mutex protects only worker lifecycle fields. It is never held during
+socket I/O, command execution, or logging. Logging remains mutex-free as
+requested; timestamp conversion uses thread-safe `localtime_r()`.
 
 The main function installs `SIGINT` and `SIGTERM` handlers, then calls the
 server loop. The loop accepts nonblocking clients, uses `poll()` for readiness,

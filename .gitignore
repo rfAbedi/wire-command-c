@@ -2,6 +2,7 @@
 /build/
 /wirecommand
 /wirecommand-uds
+/wirecommand-uds-threaded
 /wirecommand-tcp
 
 # Coverage and diagnostic output
