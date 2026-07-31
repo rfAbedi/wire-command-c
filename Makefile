@@ -4,17 +4,22 @@ CLANG_FORMAT ?= clang-format
 CPPFLAGS := -Iinclude
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -O2
 BUILD_DIR := build
-CORE_SOURCES := src/logging.c src/buffer.c src/protocol.c src/commands.c src/queue.c
+CORE_SOURCES := src/logging.c src/buffer.c src/protocol.c src/commands.c src/queue.c src/socket_utils.c
 CORE_OBJECTS := $(CORE_SOURCES:src/%.c=$(BUILD_DIR)/obj/%.o)
-UNIT_SOURCES := tests/unit/test_main.c tests/unit/test_logging.c tests/unit/test_buffer.c tests/unit/test_protocol.c tests/unit/test_commands.c tests/unit/test_queue.c
+UDS_SOURCES := src/server_uds.c src/main_uds.c
+UDS_OBJECTS := $(UDS_SOURCES:src/%.c=$(BUILD_DIR)/obj/%.o)
+CLIENT_OBJECT := $(BUILD_DIR)/obj/main_client.o
+UNIT_SOURCES := tests/unit/test_main.c tests/unit/test_logging.c tests/unit/test_buffer.c tests/unit/test_protocol.c tests/unit/test_commands.c tests/unit/test_queue.c tests/unit/test_socket_utils.c
 UNIT_OBJECTS := $(UNIT_SOURCES:tests/unit/%.c=$(BUILD_DIR)/obj/tests/%.o)
 UNIT_RUNNER := $(BUILD_DIR)/tests/unit_tests
-DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UNIT_OBJECTS:.o=.d)
+INTEGRATION_OBJECT := $(BUILD_DIR)/obj/tests/integration/test_uds.o
+INTEGRATION_RUNNER := $(BUILD_DIR)/tests/integration_uds
+DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UDS_OBJECTS:.o=.d) $(CLIENT_OBJECT:.o=.d) $(UNIT_OBJECTS:.o=.d) $(INTEGRATION_OBJECT:.o=.d)
 FORMAT_FILES := $(wildcard include/wirecommand/*.h src/*.c tests/unit/*.c tests/unit/*.h)
 
-.PHONY: all test coverage clean
+.PHONY: all test integration-test check coverage clean
 
-all: $(CORE_OBJECTS)
+all: wirecommand wirecommand-uds
 
 $(BUILD_DIR)/obj/%.o: src/%.c
 	@mkdir -p $(@D)
@@ -24,6 +29,16 @@ $(BUILD_DIR)/obj/tests/%.o: tests/unit/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
+$(BUILD_DIR)/obj/tests/integration/%.o: tests/integration/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+wirecommand-uds: $(CORE_OBJECTS) $(UDS_OBJECTS)
+	$(CC) $(CFLAGS) $^ -o $@
+
+wirecommand: $(CLIENT_OBJECT) $(BUILD_DIR)/obj/buffer.o $(BUILD_DIR)/obj/protocol.o $(BUILD_DIR)/obj/socket_utils.o
+	$(CC) $(CFLAGS) $^ -o $@
+
 $(UNIT_RUNNER): $(UNIT_OBJECTS) $(CORE_OBJECTS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $^ -o $@
@@ -31,13 +46,23 @@ $(UNIT_RUNNER): $(UNIT_OBJECTS) $(CORE_OBJECTS)
 test: $(UNIT_RUNNER)
 	$(UNIT_RUNNER)
 
+$(INTEGRATION_RUNNER): $(INTEGRATION_OBJECT) $(BUILD_DIR)/obj/buffer.o $(BUILD_DIR)/obj/protocol.o
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $^ -o $@
+
+integration-test: wirecommand-uds $(INTEGRATION_RUNNER)
+	$(INTEGRATION_RUNNER) ./wirecommand-uds
+
+check: all test integration-test
+
 coverage:
 	$(MAKE) clean
 	$(MAKE) CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -O0 -g --coverage' test
-	gcov -o $(BUILD_DIR)/obj src/logging.c src/buffer.c src/protocol.c src/commands.c src/queue.c
+	gcov -o $(BUILD_DIR)/obj src/logging.c src/buffer.c src/protocol.c src/commands.c src/queue.c src/socket_utils.c
 
 clean:
 	rm -rf -- $(BUILD_DIR)
 	rm -f -- *.gcov
+	rm -f -- wirecommand wirecommand-uds
 
 -include $(DEPENDENCIES)
