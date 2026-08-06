@@ -88,7 +88,7 @@ void wc_log_v(enum wc_log_level level, const char *component,
         return;
     }
 
-    (void)fprintf(stderr, "[%s] %-5s %s: event=%s%s%s\n", timestamp,
+    (void)fprintf(stderr, "[%s] %-5s %s:%s%s%s\n", timestamp,
                   wc_log_level_name(level), component, event,
                   has_context ? " " : "", has_context ? context : "");
     errno = saved_errno;

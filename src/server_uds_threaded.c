@@ -58,6 +58,9 @@ static int wc_threaded_uds_is_stopping(
     if (pthread_mutex_unlock(&server->workers_lock) != 0) {
         return 1;
     }
+    wc_log(WC_LOG_TRACE, "server", "shutdown_checked",
+           "transport=uds-threaded thread=%lu stopping=%d",
+           (unsigned long)pthread_self(), stopping);
     return stopping;
 }
 
@@ -73,6 +76,10 @@ static int wc_threaded_uds_request_stop(
     }
     server->stopping = 1;
     unlock_result = pthread_mutex_unlock(&server->workers_lock);
+    if (unlock_result == 0) {
+        wc_log(WC_LOG_DEBUG, "server", "shutdown_requested",
+               "transport=uds-threaded");
+    }
     return unlock_result;
 }
 
@@ -117,6 +124,9 @@ static int wc_threaded_uds_open_listener(const char *socket_path)
         errno = saved_errno;
         return -1;
     }
+    wc_log(WC_LOG_DEBUG, "server", "listener_ready",
+           "transport=uds-threaded listener=fd:%d socket=%s", listener_fd,
+           socket_path);
     return listener_fd;
 }
 
@@ -125,6 +135,11 @@ static int wc_threaded_uds_run_command(enum wc_request_type type,
                                        size_t argument_length,
                                        struct wc_command_result *result)
 {
+    wc_log(WC_LOG_DEBUG, "commands", "command_dispatch",
+           "transport=uds-threaded thread=%lu type=%u argument_length=%zu",
+           (unsigned long)pthread_self(), (unsigned int)type,
+           argument_length);
+
     switch (type) {
     case WC_REQUEST_LS:
         return wc_command_ls(argument, argument_length, UINT16_MAX, result);
@@ -205,6 +220,10 @@ static int wc_threaded_uds_process_request(struct wc_buffer *input,
            "client=fd:%d thread=%lu type=%u message_length=%zu", client_fd,
            (unsigned long)pthread_self(), (unsigned int)request.type,
            request.message_length);
+    wc_log(WC_LOG_DEBUG, "server", "response_queued",
+           "client=fd:%d thread=%lu type=%u output_pending=%zu", client_fd,
+           (unsigned long)pthread_self(), (unsigned int)request.type,
+           output->length);
     return wc_buffer_consume(input, consumed);
 }
 
@@ -221,7 +240,14 @@ static int wc_threaded_uds_read(int client_fd, struct wc_buffer *input)
     }
     bytes_read = read(client_fd, bytes, read_size);
     if (bytes_read > 0) {
-        return wc_buffer_append(input, bytes, (size_t)bytes_read);
+        if (wc_buffer_append(input, bytes, (size_t)bytes_read) == -1) {
+            return -1;
+        }
+        wc_log(WC_LOG_DEBUG, "server", "read_complete",
+               "client=fd:%d thread=%lu bytes=%zu input_pending=%zu",
+               client_fd, (unsigned long)pthread_self(),
+               (size_t)bytes_read, input->length);
+        return 0;
     }
     if (bytes_read == 0) {
         errno = ECONNRESET;
@@ -239,7 +265,14 @@ static int wc_threaded_uds_write(int client_fd, struct wc_buffer *output)
                                  MSG_NOSIGNAL);
 
     if (bytes_written > 0) {
-        return wc_buffer_consume(output, (size_t)bytes_written);
+        if (wc_buffer_consume(output, (size_t)bytes_written) == -1) {
+            return -1;
+        }
+        wc_log(WC_LOG_DEBUG, "server", "write_complete",
+               "client=fd:%d thread=%lu bytes=%zu output_pending=%zu",
+               client_fd, (unsigned long)pthread_self(),
+               (size_t)bytes_written, output->length);
+        return 0;
     }
     if (bytes_written == -1 &&
         (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -258,6 +291,11 @@ static void wc_threaded_uds_mark_finished(
 
         worker->finished = 1;
         unlock_result = pthread_mutex_unlock(&worker->server->workers_lock);
+        if (unlock_result == 0) {
+            wc_log(WC_LOG_DEBUG, "server", "worker_finished",
+                   "transport=uds-threaded client=fd:%d thread=%lu",
+                   worker->client_fd, (unsigned long)pthread_self());
+        }
         if (unlock_result != 0) {
             wc_log(WC_LOG_ERROR, "server", "worker_unlock_failed",
                    "thread=%lu error=%d", (unsigned long)pthread_self(),
@@ -362,6 +400,9 @@ static void wc_threaded_uds_workers_init(struct wc_threaded_uds_server *server)
         server->workers[index].finished = 0;
         server->workers[index].server = server;
     }
+    wc_log(WC_LOG_DEBUG, "server", "worker_table_initialized",
+           "transport=uds-threaded slots=%d",
+           WC_THREADED_UDS_MAX_CLIENTS);
 }
 
 /* Join completed workers before their slots are reused. */
@@ -403,6 +444,8 @@ static void wc_threaded_uds_reap_finished(
             }
             server->workers[index].client_fd = -1;
             server->workers[index].in_use = 0;
+            wc_log(WC_LOG_DEBUG, "server", "worker_reaped",
+                   "transport=uds-threaded slot=%zu", index);
         }
     }
 }
@@ -456,6 +499,9 @@ static int wc_threaded_uds_start_worker(
             wc_log(WC_LOG_ERROR, "server", "signal_mask_restore_failed",
                    "transport=uds-threaded error=%d", restore_result);
         }
+        wc_log(WC_LOG_DEBUG, "server", "worker_created",
+               "transport=uds-threaded client=fd:%d slot=%zu", client_fd,
+               index);
         return 0;
     }
 
@@ -494,6 +540,9 @@ static int wc_threaded_uds_join_all(struct wc_threaded_uds_server *server)
 {
     size_t index;
     int result = 0;
+
+    wc_log(WC_LOG_DEBUG, "server", "workers_join_all",
+           "transport=uds-threaded");
 
     for (index = 0; index < WC_THREADED_UDS_MAX_CLIENTS; ++index) {
         if (server->workers[index].in_use) {

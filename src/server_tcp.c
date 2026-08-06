@@ -55,6 +55,9 @@ static int wc_tcp_is_stopping(struct wc_tcp_server *server)
     if (pthread_mutex_unlock(&server->workers_lock) != 0) {
         return 1;
     }
+    wc_log(WC_LOG_TRACE, "server", "shutdown_checked",
+           "transport=tcp thread=%lu stopping=%d",
+           (unsigned long)pthread_self(), stopping);
     return stopping;
 }
 
@@ -69,6 +72,10 @@ static int wc_tcp_request_stop(struct wc_tcp_server *server)
     }
     server->stopping = 1;
     unlock_result = pthread_mutex_unlock(&server->workers_lock);
+    if (unlock_result == 0) {
+        wc_log(WC_LOG_DEBUG, "server", "shutdown_requested",
+               "transport=tcp");
+    }
     return unlock_result;
 }
 
@@ -109,6 +116,9 @@ static int wc_tcp_open_listener(const char *bind_address, uint16_t port)
         errno = saved_errno;
         return -1;
     }
+    wc_log(WC_LOG_DEBUG, "server", "listener_ready",
+           "transport=tcp listener=fd:%d bind=%s port=%u", listener_fd,
+           bind_address, (unsigned int)port);
     return listener_fd;
 }
 
@@ -117,6 +127,11 @@ static int wc_tcp_run_command(enum wc_request_type type,
                               size_t argument_length,
                               struct wc_command_result *result)
 {
+    wc_log(WC_LOG_DEBUG, "commands", "command_dispatch",
+           "transport=tcp thread=%lu type=%u argument_length=%zu",
+           (unsigned long)pthread_self(), (unsigned int)type,
+           argument_length);
+
     switch (type) {
     case WC_REQUEST_LS:
         return wc_command_ls(argument, argument_length, UINT16_MAX, result);
@@ -200,6 +215,11 @@ static int wc_tcp_process_request(struct wc_buffer *input,
            "message_length=%zu",
            client_fd, (unsigned long)pthread_self(),
            (unsigned int)request.type, request.message_length);
+    wc_log(WC_LOG_DEBUG, "server", "response_queued",
+           "transport=tcp client=fd:%d thread=%lu type=%u "
+           "output_pending=%zu",
+           client_fd, (unsigned long)pthread_self(),
+           (unsigned int)request.type, output->length);
     return wc_buffer_consume(input, consumed);
 }
 
@@ -216,7 +236,15 @@ static int wc_tcp_read_client(int client_fd, struct wc_buffer *input)
     }
     bytes_read = read(client_fd, bytes, read_size);
     if (bytes_read > 0) {
-        return wc_buffer_append(input, bytes, (size_t)bytes_read);
+        if (wc_buffer_append(input, bytes, (size_t)bytes_read) == -1) {
+            return -1;
+        }
+        wc_log(WC_LOG_DEBUG, "server", "read_complete",
+               "transport=tcp client=fd:%d thread=%lu bytes=%zu "
+               "input_pending=%zu",
+               client_fd, (unsigned long)pthread_self(),
+               (size_t)bytes_read, input->length);
+        return 0;
     }
     if (bytes_read == 0) {
         errno = ECONNRESET;
@@ -234,7 +262,15 @@ static int wc_tcp_write_client(int client_fd, struct wc_buffer *output)
                                  MSG_NOSIGNAL);
 
     if (bytes_written > 0) {
-        return wc_buffer_consume(output, (size_t)bytes_written);
+        if (wc_buffer_consume(output, (size_t)bytes_written) == -1) {
+            return -1;
+        }
+        wc_log(WC_LOG_DEBUG, "server", "write_complete",
+               "transport=tcp client=fd:%d thread=%lu bytes=%zu "
+               "output_pending=%zu",
+               client_fd, (unsigned long)pthread_self(),
+               (size_t)bytes_written, output->length);
+        return 0;
     }
     if (bytes_written == -1 &&
         (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -255,6 +291,11 @@ static void wc_tcp_mark_finished(struct wc_tcp_worker *worker)
     }
     worker->finished = 1;
     lock_result = pthread_mutex_unlock(&worker->server->workers_lock);
+    if (lock_result == 0) {
+        wc_log(WC_LOG_DEBUG, "server", "worker_finished",
+               "transport=tcp client=fd:%d thread=%lu", worker->client_fd,
+               (unsigned long)pthread_self());
+    }
     if (lock_result != 0) {
         wc_log(WC_LOG_ERROR, "server", "worker_unlock_failed",
                "transport=tcp thread=%lu error=%d",
@@ -361,6 +402,8 @@ static void wc_tcp_workers_init(struct wc_tcp_server *server)
         server->workers[index].finished = 0;
         server->workers[index].server = server;
     }
+    wc_log(WC_LOG_DEBUG, "server", "worker_table_initialized",
+           "transport=tcp slots=%d", WC_TCP_MAX_CLIENTS);
 }
 
 /* Join completed workers before their fixed slots are reused. */
@@ -400,6 +443,8 @@ static void wc_tcp_reap_finished(struct wc_tcp_server *server)
             }
             server->workers[index].client_fd = -1;
             server->workers[index].in_use = 0;
+            wc_log(WC_LOG_DEBUG, "server", "worker_reaped",
+                   "transport=tcp slot=%zu", index);
         }
     }
 }
@@ -451,6 +496,8 @@ static int wc_tcp_start_worker(struct wc_tcp_server *server, int client_fd)
             wc_log(WC_LOG_ERROR, "server", "signal_mask_restore_failed",
                    "transport=tcp error=%d", restore_result);
         }
+        wc_log(WC_LOG_DEBUG, "server", "worker_created",
+               "transport=tcp client=fd:%d slot=%zu", client_fd, index);
         return 0;
     }
 
@@ -491,6 +538,8 @@ static int wc_tcp_join_all(struct wc_tcp_server *server)
 {
     size_t index;
     int result = 0;
+
+    wc_log(WC_LOG_DEBUG, "server", "workers_join_all", "transport=tcp");
 
     for (index = 0; index < WC_TCP_MAX_CLIENTS; ++index) {
         if (server->workers[index].in_use) {

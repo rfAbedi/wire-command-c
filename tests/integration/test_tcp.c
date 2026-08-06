@@ -500,7 +500,8 @@ static int test_tcp_command_line_client_receives_response(
         }
         (void)close(output_pipe[1]);
         execl(wc_tcp_client_program, wc_tcp_client_program, "--host",
-              "127.0.0.1", "--port", port_text, "PWD", (char *)NULL);
+              "127.0.0.1", "--port", port_text, "--log-level", "error",
+              "PWD", (char *)NULL);
         _exit(127);
     }
 

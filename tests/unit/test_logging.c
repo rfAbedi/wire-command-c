@@ -146,8 +146,7 @@ int test_logging_record_has_structured_fields(void)
     WC_TEST_ASSERT(capture_stderr_end(&capture, output, sizeof(output)) == 0);
 
     WC_TEST_ASSERT(output[0] != '\0');
-    WC_TEST_ASSERT(strstr(output, "] INFO  test: event=record client=fd:7\n") !=
-                   NULL);
+    WC_TEST_ASSERT(strstr(output, "] INFO  test:record client=fd:7\n") != NULL);
     wc_log_set_level(WC_LOG_INFO);
     return 0;
 }

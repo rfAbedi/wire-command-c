@@ -91,7 +91,12 @@ In another terminal, send commands with the `wirecommand` client:
 ./wirecommand --socket /tmp/wirecommand-demo.sock PWD
 ./wirecommand --socket /tmp/wirecommand-demo.sock LS /tmp
 ./wirecommand --socket /tmp/wirecommand-demo.sock CAT /etc/hostname
+./wirecommand --socket /tmp/wirecommand-demo.sock --log-level debug PWD
 ```
+
+Client logs go to standard error, while command response bytes remain on
+standard output. Use `--log-level trace` to include low-level parsing and
+cleanup events.
 
 The client converts the command to the binary request representation:
 

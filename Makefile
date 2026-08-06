@@ -56,7 +56,7 @@ $(TCP_OBJECTS): CFLAGS += -pthread
 wirecommand-tcp: $(CORE_OBJECTS) $(TCP_OBJECTS)
 	$(CC) $(CFLAGS) -pthread $^ -o $@
 
-wirecommand: $(CLIENT_OBJECT) $(BUILD_DIR)/obj/buffer.o $(BUILD_DIR)/obj/protocol.o $(BUILD_DIR)/obj/socket_utils.o
+wirecommand: $(CLIENT_OBJECT) $(BUILD_DIR)/obj/logging.o $(BUILD_DIR)/obj/buffer.o $(BUILD_DIR)/obj/protocol.o $(BUILD_DIR)/obj/socket_utils.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(UNIT_RUNNER): $(UNIT_OBJECTS) $(CORE_OBJECTS)

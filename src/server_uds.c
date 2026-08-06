@@ -39,6 +39,8 @@ static void wc_uds_clients_init(struct wc_uds_client *clients)
     for (index = 0; index < WC_UDS_MAX_CLIENTS; ++index) {
         clients[index].fd = -1;
     }
+    wc_log(WC_LOG_DEBUG, "server", "client_table_initialized",
+           "transport=uds slots=%d", WC_UDS_MAX_CLIENTS);
 }
 
 static struct wc_uds_client *wc_uds_find_client(struct wc_uds_client *clients,
@@ -46,12 +48,27 @@ static struct wc_uds_client *wc_uds_find_client(struct wc_uds_client *clients,
 {
     size_t index;
 
+    wc_log(WC_LOG_TRACE, "server", "client_lookup",
+           "transport=uds client=fd:%d", client_fd);
+
     for (index = 0; index < WC_UDS_MAX_CLIENTS; ++index) {
         if (clients[index].fd == client_fd) {
             return &clients[index];
         }
     }
     return NULL;
+}
+
+static int wc_uds_has_free_client_slot(const struct wc_uds_client *clients)
+{
+    size_t index;
+
+    for (index = 0; index < WC_UDS_MAX_CLIENTS; ++index) {
+        if (clients[index].fd == -1) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* Add a client only after both of its owned buffers are initialized. */
@@ -71,6 +88,8 @@ static int wc_uds_add_client(struct wc_uds_client *clients, int client_fd)
             return -1;
         }
         clients[index].fd = client_fd;
+        wc_log(WC_LOG_DEBUG, "server", "client_added",
+               "transport=uds client=fd:%d slot=%zu", client_fd, index);
         return 0;
     }
 
@@ -141,6 +160,9 @@ static int wc_uds_open_listener(const char *socket_path)
         errno = saved_errno;
         return -1;
     }
+    wc_log(WC_LOG_DEBUG, "server", "listener_ready",
+           "transport=uds listener=fd:%d socket=%s", listener_fd,
+           socket_path);
     return listener_fd;
 }
 
@@ -149,7 +171,13 @@ static void wc_uds_accept_clients(int listener_fd,
                                   struct wc_uds_client *clients)
 {
     for (;;) {
-        int client_fd = accept(listener_fd, NULL, NULL);
+        int client_fd;
+
+        /* Leave excess connections in the listen backlog until a slot opens. */
+        if (!wc_uds_has_free_client_slot(clients)) {
+            return;
+        }
+        client_fd = accept(listener_fd, NULL, NULL);
 
         if (client_fd == -1) {
             if (errno == EINTR) {
@@ -237,6 +265,9 @@ static int wc_uds_read_client(struct wc_uds_client *client,
                 wc_uds_enqueue_complete_requests(client, queue) == -1) {
                 return -1;
             }
+            wc_log(WC_LOG_DEBUG, "server", "read_complete",
+                   "client=fd:%d bytes=%zu input_pending=%zu",
+                   client->fd, (size_t)bytes_read, client->input.length);
             continue;
         }
         if (bytes_read == 0) {
@@ -263,6 +294,10 @@ static int wc_uds_write_client(struct wc_uds_client *client)
                                   (size_t)bytes_written) == -1) {
                 return -1;
             }
+            wc_log(WC_LOG_DEBUG, "server", "write_complete",
+                   "client=fd:%d bytes=%zu output_pending=%zu",
+                   client->fd, (size_t)bytes_written,
+                   client->output.length);
             continue;
         }
         if (bytes_written == -1 && errno == EINTR) {
@@ -280,6 +315,11 @@ static int wc_uds_write_client(struct wc_uds_client *client)
 static int wc_uds_run_command(const struct wc_queued_request *request,
                               struct wc_command_result *result)
 {
+    wc_log(WC_LOG_DEBUG, "commands", "command_dispatch",
+           "transport=uds client=fd:%d type=%u argument_length=%zu",
+           request->client_fd, (unsigned int)request->type,
+           request->argument_length);
+
     switch (request->type) {
     case WC_REQUEST_LS:
         return wc_command_ls(request->argument, request->argument_length,
@@ -366,6 +406,9 @@ static void wc_uds_process_queue(struct wc_uds_client *clients,
             wc_uds_remove_client(client, queue);
             continue;
         }
+        wc_log(WC_LOG_DEBUG, "server", "response_queued",
+               "client=fd:%d type=%u output_pending=%zu", client->fd,
+               (unsigned int)request->type, client->output.length);
         wc_queued_request_destroy(request);
     }
 }
@@ -378,7 +421,9 @@ static nfds_t wc_uds_build_poll_list(struct pollfd *poll_descriptors,
     size_t index;
 
     poll_descriptors[0].fd = listener_fd;
-    poll_descriptors[0].events = POLLIN;
+    /* At capacity, wait for a client slot instead of accepting and rejecting. */
+    poll_descriptors[0].events =
+        wc_uds_has_free_client_slot(clients) ? POLLIN : 0;
     poll_descriptors[0].revents = 0;
 
     for (index = 0; index < WC_UDS_MAX_CLIENTS; ++index) {
@@ -394,6 +439,8 @@ static nfds_t wc_uds_build_poll_list(struct pollfd *poll_descriptors,
         client_indexes[count] = index;
         ++count;
     }
+    wc_log(WC_LOG_TRACE, "server", "poll_list_built",
+           "transport=uds descriptors=%lu", (unsigned long)count);
     return count;
 }
 
@@ -401,6 +448,9 @@ static void wc_uds_close_all_clients(struct wc_uds_client *clients,
                                      struct wc_request_queue *queue)
 {
     size_t index;
+
+    wc_log(WC_LOG_DEBUG, "server", "clients_close_all",
+           "transport=uds");
 
     for (index = 0; index < WC_UDS_MAX_CLIENTS; ++index) {
         wc_uds_remove_client(&clients[index], queue);
@@ -449,9 +499,6 @@ int wc_server_uds_run(const char *socket_path,
             result = -1;
             break;
         }
-        if ((poll_descriptors[0].revents & POLLIN) != 0) {
-            wc_uds_accept_clients(listener_fd, clients);
-        }
         if ((poll_descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) !=
             0) {
             errno = EIO;
@@ -480,6 +527,10 @@ int wc_server_uds_run(const char *socket_path,
             if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
                 wc_uds_remove_client(client, &queue);
             }
+        }
+        /* Reclaim closed client slots before accepting replacement clients. */
+        if ((poll_descriptors[0].revents & POLLIN) != 0) {
+            wc_uds_accept_clients(listener_fd, clients);
         }
     }
 
