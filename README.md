@@ -207,24 +207,6 @@ queue. The threaded servers instead give each client an independent sequential
 session; their main threads only accept connections and track worker lifetime.
 All variants share the protocol, buffer, command, logging, and socket modules.
 
-### Ownership and lifetime
-
-| Resource | Owner | Lifetime ends when |
-| --- | --- | --- |
-| Listener descriptor | Server main loop | Server shutdown |
-| Poll-UDS client descriptor and buffers | Client-table entry | Client removal |
-| Threaded client descriptor and buffers | One worker | Worker exit |
-| Worker thread handle | Server worker table | Main thread joins it |
-| Parsed protocol view | Input buffer | Buffer is consumed, grown, or destroyed |
-| Queued UDS request copy | Queue, then dispatcher | Request is destroyed |
-| Command result allocation | Server dispatcher | Result is destroyed |
-| Encoded client request | `wirecommand` client | Client cleanup |
-
-Descriptors transfer to a threaded worker only after `pthread_create()`
-succeeds. A creation failure leaves ownership with the accept loop, which
-closes the descriptor. No application mutex is held during command, socket, or
-logging operations.
-
 ### Shutdown flow
 
 Signal handlers only assign a `volatile sig_atomic_t` flag. Thread creation
@@ -234,6 +216,8 @@ stops accepting, publishes synchronized worker shutdown, closes the listener,
 joins every worker, and removes the UDS path where applicable.
 
 ### How I/O multiplexing works
+
+![Poll-based UDS event loop](<docs/Diagrams/WireCommand-poll.png>)
 
 `poll()` receives an array of descriptors plus the events wanted for each one.
 The kernel sleeps until at least one descriptor is ready, a signal interrupts
@@ -256,11 +240,7 @@ header. The explicit contract is authoritative.
 
 Requests use this layout:
 
-```text
-+----------------+----------------+----------------------+-------------------+
-| size (2 bytes) | type (2 bytes) | argument size (2 B)  | argument          |
-+----------------+----------------+----------------------+-------------------+
-```
+![WireCommand request frame](<docs/Diagrams/WireCommand-Request-Frame.png>)
 
 The request types are `LS=1`, `PWD=2`, and `CAT=3`. Every integer uses network
 byte order. Request size includes the six-byte header, while argument size is
@@ -272,11 +252,7 @@ request size = 6 + argument size
 
 Responses intentionally have a different layout:
 
-```text
-+----------------------+--------------------------+
-| data size (2 bytes)  | response data (variable) |
-+----------------------+--------------------------+
-```
+![WireCommand response frame](<docs/Diagrams/WireCommand-Response-Frame.png>)
 
 Response size counts only response-data bytes and does not include the two-byte
 header. A zero-length response is encoded as `00 00`. Arguments and response
@@ -300,6 +276,16 @@ Both parsers return a view into the caller's input buffer. The caller must
 process or copy that view before consuming or growing the input buffer. The
 request and response encoders remain separate because their headers and length
 meanings differ. They share only the private two-byte integer helpers.
+
+### Incremental parsing
+
+![Incremental parser sequence](<docs/Diagrams/WireCommand-incremental parser sequence.png>)
+
+The parser never assumes one `read()` contains one complete frame. It returns
+`WC_PARSE_NEED_MORE` while retaining accumulated bytes, `WC_PARSE_COMPLETE`
+with the number of bytes that may be consumed, or `WC_PARSE_INVALID` when the
+connection must be rejected. After a complete frame is processed, any
+coalesced bytes remain in the buffer for the next parse call.
 
 ## Commands
 
@@ -351,18 +337,6 @@ design as an alternative rather than adding unused abstraction to this code.
   client or request allocation.
 - Logging has no application-level mutex by request; each record is emitted by
   one standard-I/O call.
-
-## Interview walkthrough
-
-A short code walkthrough can follow this order:
-
-1. Show the protocol structures and incremental parser.
-2. Show per-client buffers and the poll-UDS descriptor table.
-3. Explain enqueue ownership and FIFO dispatch.
-4. Compare the UDS loop with TCP accept plus one worker per client.
-5. Trace signal handling, worker joins, descriptor closure, and cleanup.
-6. Explain the generic-queue alternative described above.
-7. Finish with the real-server, concurrency, sanitizer, and resource tests.
 
 ## Release plan
 
