@@ -19,3 +19,5 @@ core.*
 *.zip
 *.mp4
 *.tar.gz
+*.drawio
+*.bkp
