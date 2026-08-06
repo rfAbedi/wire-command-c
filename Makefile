@@ -25,7 +25,7 @@ TCP_INTEGRATION_RUNNER := $(BUILD_DIR)/tests/integration_tcp
 DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(UDS_OBJECTS:.o=.d) $(THREADED_UDS_OBJECTS:.o=.d) $(TCP_OBJECTS:.o=.d) $(CLIENT_OBJECT:.o=.d) $(UNIT_OBJECTS:.o=.d) $(INTEGRATION_OBJECT:.o=.d) $(TCP_INTEGRATION_OBJECT:.o=.d)
 FORMAT_FILES := $(wildcard include/wirecommand/*.h src/*.c tests/unit/*.c tests/unit/*.h tests/integration/*.c)
 COVERAGE_SOURCES := $(CORE_SOURCES) $(UDS_SOURCES) $(THREADED_UDS_SOURCES) $(TCP_SOURCES) src/main_client.c
-PACKAGE_FILES := Makefile setup.sh README.md Jenkinsfile FEATURES.md include src tests wirecommand wirecommand-uds wirecommand-uds-threaded wirecommand-tcp
+PACKAGE_FILES := Makefile setup.sh README.md Jenkinsfile docs include src tests wirecommand wirecommand-uds wirecommand-uds-threaded wirecommand-tcp
 
 .PHONY: all test integration-test check debug asan ubsan coverage format clean package ci-clean
 
